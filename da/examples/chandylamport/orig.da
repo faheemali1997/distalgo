@@ -6,83 +6,98 @@ import random
 ## Chandy Lamport Algorithm for Determining States of Gloabal System ###
 ########################################################################
 
+# Algorithm:
+# Marker Sending Rule (At snapshot initiator node S):
+#       1. Node S saves its own state
+#       2. Node S sends a "marker" message to all other nodes.
+# Marker Receiving Rule (At receiver node R):
+#       1. if reciever node R has not recorded its state:
+#              a. R records its own state
+#              b. R records the channel state from where the marker came as empty sequence
+#       2. else: (if reciever node R has recorded its state)
+#               R records the state of channel c as the sequence of messages received along c 
+#               after R's state was recorded and before R received the marker along c.
+# Termination of Algorithm: 
+#       1. We terminate the algorithm when every node has received a marker and has recorded the channel and local state.
+
+# Reference: 1. https://www.cs.princeton.edu/courses/archive/fall16/cos418/docs/P8-chandy-lamport.pdf
+#            2. https://en.wikipedia.org/wiki/Chandy–Lamport_algorithm
+
+
 class Nodes(process):
+    # nodes: set of other replica nodes
     def setup(nodes:set, initial_state:list, leader:bool):
-        self.is_leader = leader
-        self.state = initial_state
-        self.has_recorded_state = False
-        self.channel_state = []
-        ## A dictionary to store the state of the channels
-        self.channels = dict.fromkeys(nodes,True)
+        self.leader = leader # A bool to set snapshot initiator node
+        self.local_state = initial_state #initial state of the replica
+        self.recorded_state = [] # recorded state
+        self.has_recorded_state = False # A bool which is set true once the replica records its state
+        self.channel_state = {node: [] for node in nodes} # Initiaialise channels to empty list
+        self.channels = {node: True for node in nodes} # A dictionary to store the state of the channels
 
-
-    ## Transfering a random value to some random node.
+    # Transfering a random value to some random node.
     def transfer():
         value = randint(1,100)
         nnode = random.choice(tuple(nodes))
-        send(('transfer',value), to={nnode})
         output('Transfer '+ str(value) + ' to '+ str(nnode))
+        send(('transfer',value), to={nnode})
     
-    ## Node recieves a value and processes it
+    # Node recieves a value and processes it
     def receive(msg=('transfer',value), from_=node):
-        ## If the node has recorded it's own local state but if channel is still under observation.
-        if(self.has_recorded_state and channels.get(node)):
+        # If the node has recorded it's own local state but if channel is still under observation.
+        if has_recorded_state and channels.get(node):
+            # Records the value to the channel state since it was in transition.
+            channel_state[node].append(value)
             output('Add ' + str(value) + ' to channel State')
-            ## Records the value to the channel state since it was in transition.
-            self.channel_state.append(value)
         else: 
-            output('Add ' + str(value) + ' to local State')
-            ## Records the value to its local state.
-            self.state.append(value)
-
-    ## Function to initiate the snapshot.
-    def sendMarker():
-        output('Initiating Snapshot')
-        ## Before initiating the node records its own state.
-        output("Recording state for node: " + str(self))
-        ## Node send a marker message to every other node in the system.
-        send(('marker','marker_message'), to=nodes)
+            # Records the value to its local state.
+            local_state.append(value)
+            output('Add ' + str(value) + ' to local State') 
     
-    ## Function upon receiving the marker message by a node.
-    def receive(msg=('marker', 'marker_message'), from_=node):
-        ## If the node has not recorded its own state then it records it and then sends a marker to every other node.
-        if(not self.has_recorded_state):
-            self.has_recorded_state = True
-            output("Recording state for node: " + str(self))   
-            send(('marker','marker_message'), to=nodes)
-            self.channels[node] = False
+    # Function upon receiving the marker message by a node.
+    def receive(msg=('marker'), from_=node):
+        # If the node has not recorded its own state then it records it and then sends a marker to every other node.
+        output('Marker Received at', str(self))
+        if not has_recorded_state:
+            has_recorded_state = True
+            recorded_state = local_state
+            channels[node] = False
+            send(('marker'), to=nodes)
         else:
-            ## Else the node stops recording on that particular channel since it has already seen the marker.
-            self.channels[node] = False
+            # Else the node stops recording on that particular channel since it has already seen the marker.
+            channels[node] = False
 
-    def run():
+    def run():     
+        if leader:
+            output('Initiating Snapshot')
+            # Before initiating the node records its own state.
+            output("Recording state for node: " + str(self))
+            # Node send a marker message to every other node in the system.
+            send(('marker'), to=nodes)
+
         transfer()
-        
-        if(is_leader):
-            sendMarker()
-        
-        ## We end the snapshot when every node has recieved a marker message on each of its channels.
-        await(each(node in nodes, has= some(received(('marker', _), from_= _node))))
+        # We end the snapshot when every node has recieved a marker message on each of its channels.
+        await(each(node in nodes, has= (received(('marker'), from_= node))))
 
-        output(self.state + self.channel_state)
+        output('Recorded state at node: ', self, ':', recorded_state)
+        output('Channel state at node: ', self, ':', channel_state)
         
 def main():
     output("Starting Chandy Lamport Global Snapshot Algorithm")
 
-    nnodes = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-
-    ## Creating new nodes
-    nodes = new(Nodes, num= nnodes)
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 4
+    
+    config(channel="fifo")
+    
+    # Creating new nodes
+    nodes = new(Nodes, num= n)
 
     list_nodes = list(nodes)
 
-    initial_state = []
-
-    ## Setup for snapshot initiator node
-    setup(list_nodes[0],(nodes-{list_nodes[0]},initial_state,True)) 
+    # Setup for snapshot initiator node
+    setup(list_nodes[0],(nodes-{list_nodes[0]},[],True)) 
     
     for node in list_nodes[1:]: 
-        setup(node,(nodes-{node},initial_state,False)) ##calling setup of node with node set and initial state
+        setup(node,(nodes-{node},[],False)) # calling setup of every node with node set and initial state
     
-    ## Starting nodes
+    # Starting nodes
     start(nodes)
