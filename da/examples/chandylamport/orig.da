@@ -29,22 +29,14 @@ class Nodes(process):
     def setup(nodes:set, initial_state:list, leader:bool):
         self.leader = leader # A bool to set snapshot initiator node
         self.local_state = initial_state #initial state of the replica
-        self.recorded_state = [] # recorded state
-        self.has_recorded_state = False # A bool which is set true once the replica records its state
+        self.recorded_state = None # Recorded state
         self.channel_state = {node: [] for node in nodes} # Initiaialise channels to empty list
         self.channels = {node: True for node in nodes} # A dictionary to store the state of the channels
-
-    # Transfering a random value to some random node.
-    def transfer():
-        value = randint(1,100)
-        nnode = random.choice(tuple(nodes))
-        output('Transfer '+ str(value) + ' to '+ str(nnode))
-        send(('transfer',value), to={nnode})
     
     # Node recieves a value and processes it
     def receive(msg=('transfer',value), from_=node):
-        # If the node has recorded it's own local state but if channel is still under observation.
-        if has_recorded_state and channels.get(node):
+        # If the node has recorded it's own local state and if channel is still under observation.
+        if recorded_state is not None and channels.get(node):
             # Records the value to the channel state since it was in transition.
             channel_state[node].append(value)
             output('Add ' + str(value) + ' to channel State')
@@ -57,8 +49,7 @@ class Nodes(process):
     def receive(msg=('marker'), from_=node):
         # If the node has not recorded its own state then it records it and then sends a marker to every other node.
         output('Marker Received at', str(self))
-        if not has_recorded_state:
-            has_recorded_state = True
+        if recorded_state is None:
             recorded_state = local_state
             channels[node] = False
             send(('marker'), to=nodes)
@@ -66,11 +57,18 @@ class Nodes(process):
             # Else the node stops recording on that particular channel since it has already seen the marker.
             channels[node] = False
 
+    # Transfering a random value to some random node.
+    def transfer():
+        value = randint(1,100)
+        nnode = random.choice(tuple(nodes))
+        output('Transfer '+ str(value) + ' to '+ str(nnode))
+        send(('transfer',value), to={nnode})
+
     def run():     
         if leader:
             output('Initiating Snapshot')
             # Before initiating the node records its own state.
-            output("Recording state for node: " + str(self))
+            recorded_state = local_state
             # Node send a marker message to every other node in the system.
             send(('marker'), to=nodes)
 
@@ -80,6 +78,7 @@ class Nodes(process):
 
         output('Recorded state at node: ', self, ':', recorded_state)
         output('Channel state at node: ', self, ':', channel_state)
+    
         
 def main():
     output("Starting Chandy Lamport Global Snapshot Algorithm")
@@ -90,13 +89,11 @@ def main():
     
     # Creating new nodes
     nodes = new(Nodes, num= n)
-
-    list_nodes = list(nodes)
-
-    # Setup for snapshot initiator node
-    setup(list_nodes[0],(nodes-{list_nodes[0]},[],True)) 
     
-    for node in list_nodes[1:]: 
+    # Setup for snapshot initiator node
+    setup(list(nodes)[0],(nodes-{list(nodes)[0]},[],True)) 
+    
+    for node in list(nodes)[1:]: 
         setup(node,(nodes-{node},[],False)) # calling setup of every node with node set and initial state
     
     # Starting nodes
